@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:VBox xmlns:mx="http://www.adobe.com/2006/mxml" cornerRadius="5"
+	 borderStyle="solid" borderColor="#CED2D4" verticalScrollPolicy="off" 
+	 horizontalScrollPolicy="off" backgroundColor="#EBEBEB" 
+	 click="{currentState=(currentState=='expandedState'?'baseState':'expandedState')}" currentState="expandedState">
+	<mx:states>
+		<mx:State name="expandedState">
+			<mx:SetProperty target="{snippetText}" name="maxHeight" value="10000"/>
+		</mx:State>
+		<mx:State name="baseState"/>
+	</mx:states>
+	<mx:Text width="100%" id="snippetText" maxHeight="50"/>
+	<mx:Text width="100%" id="snippetSource" textAlign="right" color="#001EFF"/>
+	
+	<mx:Script>
+		<![CDATA[
+			
+			
+			override public function set data(value:Object):void{
+				super.data = value;
+				if(data){
+					if(data.p){
+						snippetText.text = (data.p.toString() as String);
+					}
+					
+					if(data.uri){
+						var links:Array = data.uri.toString().match("(?<=/data/).*(?=.xhtml)");
+						if(links.length > 0){
+							snippetSource.htmlText	= "from <a href='http://www." + links[0] + "'>" + links[0] + "</a>"; 			
+						}
+					}
+				}
+				
+			}
+			
+			
+		]]>
+	</mx:Script>
+	
+	
+	<mx:transitions>
+        <mx:Transition fromState="*" toState="*">
+            <mx:Resize target="{this}" />
+        </mx:Transition>
+    </mx:transitions>
+
+	
+</mx:VBox>

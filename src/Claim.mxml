@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:HBox xmlns:mx="http://www.adobe.com/2006/mxml" dataChange="{update()}">
+	<mx:Image id="tlIcon" width="15" height="15"/>
+	<mx:Text text="{data.text}" width="100%"/>
+	
+	
+	
+	
+	<mx:Script>
+		<![CDATA[
+			
+			
+			protected function update():void{
+				if(data){
+					switch(data.type.toString()){
+						case "claim":
+							tlIcon.load("http://wjwillett.net/other/FactExtract/icons/lightbulb.png");
+							break;
+						case "topic":
+							tlIcon.load("http://wjwillett.net/other/FactExtract/icons/folder.png");
+							break;
+						default:
+							tlIcon.load("http://wjwillett.net/other/FactExtract/icons/bomb.png");
+							break;
+					}	
+				}
+			}
+			
+		]]>
+	</mx:Script>
+	
+</mx:HBox>

@@ -1,0 +1,349 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:Application xmlns:mx="http://www.adobe.com/2006/mxml" layout="absolute" initialize="{init()}" backgroundGradientAlphas="[1.0, 1.0]" backgroundGradientColors="[#FFFFFF, #FFFFFF]" xmlns:ns1="*" xmlns:ns2="flare.flex.*" xmlns:ns3="flexlib.containers.*" currentState="clean">
+	<mx:states>
+		<mx:State name="clean">
+			<mx:SetProperty target="{accordion1}" name="visible" value="false"/>
+			<mx:SetProperty target="{accordion1}" name="includeInLayout" value="false"/>
+		</mx:State>
+		<mx:State name="debug">
+			<mx:SetEventHandler target="{linkbutton1}" name="click">
+				<mx:handler>currentState=(currentState==&quot;clean&quot;?&quot;debug&quot;:&quot;clean&quot;)</mx:handler>
+			</mx:SetEventHandler>
+		</mx:State>
+	</mx:states>
+	<mx:Script>
+		<![CDATA[
+			import mx.controls.dataGridClasses.DataGridColumn;
+			import mx.controls.Alert;
+			import mx.collections.ArrayCollection;
+			import flare.util.palette.ColorPalette;
+			
+			// Embed icons.
+	         [Embed(source="assets/folder.png")] 
+	         public var topicIcon:Class; 
+	         [Embed(source="assets/lightbulb.png")] 
+	         public var claimIcon:Class; 
+	         [Embed(source="assets/bomb.png")] 
+	         public var bombIcon:Class; 
+			
+			namespace w3 = "http://www.w3.org/1999/xhtml";
+			
+			
+			public const INPUT_WEIGHT_DEFAULT:Number = 1;
+			public const RELATED_WEIGHT_DEFAULT:Number = 0.5;
+			public const SNIPPETS_WEIGHT_DEFAULT:Number = 0.3;
+			public const USER_KEYWORDS_WEIGHT_DEFAULT:Number = 1; 
+			public const WEIGHTS_THRESHOLD_DEFAULT:Number = 5;
+			public const USER_KEYWORDS_WEIGHT:Number = 50;
+			
+			
+			protected var inputKeysHash:Object;
+			protected var relatedKeysHash:Object;
+			protected var snippetsKeysHash:Object;
+			protected var userKeysHash:Object;
+			
+			protected var inputKeysLoaded:Boolean;
+			protected var relatedKeysLoaded:Boolean;
+			protected var snippetsKeysLoaded:Boolean;
+			
+			[Bindable]
+			public var inputWeightCoefficient:Number = INPUT_WEIGHT_DEFAULT;
+			[Bindable]
+			public var relatedWeightCoefficient:Number = RELATED_WEIGHT_DEFAULT;
+			[Bindable]
+			public var snippetsWeightCoefficient:Number = SNIPPETS_WEIGHT_DEFAULT;
+			[Bindable]
+			public var userKeywordsWeightCoefficient:Number = USER_KEYWORDS_WEIGHT_DEFAULT;
+			
+			
+			
+			[Bindable]
+			public var weightsThreshold:Number = WEIGHTS_THRESHOLD_DEFAULT;	
+				
+			/**
+			 * Store a key-weight pair in a hash
+			 */			
+			protected function storeKeyWeight(hash:Object, key:String, weight:Number):void{
+				if(hash[key]) hash[key] = Math.max(hash[key], weight);
+				else hash[key] = weight;
+			}
+			
+			/**
+			 * Generate key/weight strings from a keyword-weight hash
+			 */
+			protected function getKeyWeightStrings(hash:Object,coefficient:Number=1,threshold:Number=0):Object{
+				var ks:String = "";
+				var ws:String = "";
+				for (var k:Object in hash){
+					var w:Number = (hash[k] as Number);
+					if(w*coefficient > threshold){
+						ks += (k.toString() + ",");
+						ws += ((w*coefficient).toString() + ",");
+					} 
+				} 
+				if(ks.length > 0){
+					ks = ks.substr(0,ks.length-1);
+					ws = ws.substr(0,ws.length-1);
+				} 
+				return {"keywords":ks,"weights":ws};
+			}
+			
+			[Bindable]
+			protected var feQueryString:String="";
+			[Bindable]
+			protected var factExtractStatus:String="";
+			protected var keyExtractStatus:String="";
+			
+			
+			protected function init():void{
+				ThinkLinkLoader.loadNode(1357, function(results:Object):void{
+							mmClaims.dataProvider = results;
+						});
+			}
+			
+			protected function initHashes():void{
+				inputKeysHash = new Object();
+				relatedKeysHash = new Object();
+				snippetsKeysHash = new Object();
+				userKeysHash = new Object();
+				
+				inputKeysLoaded = false;
+				relatedKeysLoaded = false;
+				snippetsKeysLoaded = false;
+			}
+			
+			public function findKeywords(claimId:int,claimText:String):void{
+				initHashes();
+				keyExtractStatus = "- loading...";
+				
+				//1.Get keywords for the entered query
+				ThinkLinkLoader.loadKeywords(claimId, function(results:Object):void{
+							for each(var k:XML in results){
+								storeKeyWeight(inputKeysHash,k.name(),k.valueOf());
+							}
+							inputKeysLoaded = true;
+							processKeywords();
+						});
+				
+				//2.Retrieve related claims,topics, and snippets and get keywords for them
+				ThinkLinkLoader.searchNodes(claimText, function(results:Object):void{
+						
+						teClaims.dataProvider = results;
+						//Once we get results, collect keywords from each
+						var j:int=0;
+						for (var i:int = 0; i < (results as XMLList).length(); i++){
+							trace(results[i].type.valueOf());
+							if(results[i].type.valueOf() == "claim" || results[i].type.valueOf() == "topic" ){
+								ThinkLinkLoader.loadKeywords(results[i].id,function(kresults:Object):void{
+										for each(var kx:XML in kresults){
+											storeKeyWeight(relatedKeysHash,kx.name(),kx.valueOf());
+											if(++j == i && j == results.length()){relatedKeysLoaded = true; processKeywords();}	
+										}
+									});
+							}
+							else if(results[i].type.valueOf() == "snippet"){
+								ThinkLinkLoader.loadKeywords(results[i].id,function(kresults:Object):void{
+										for each(var kx:XML in kresults){
+											storeKeyWeight(snippetsKeysHash,kx.name(),kx.valueOf());
+											if(++j == i && j == results.length()){
+												relatedKeysLoaded = true; processKeywords();
+												keyExtractStatus = "";
+											}	
+										}
+									});
+							}
+						}
+					});
+			}
+			
+			protected function processKeywords():void{
+				if(inputKeysLoaded && relatedKeysLoaded){
+					keywordBox.clear();								
+					addHashedKeywordsToBox(inputKeysHash,"input",inputWeightCoefficient);
+					addHashedKeywordsToBox(relatedKeysHash,"related", relatedWeightCoefficient);
+					addHashedKeywordsToBox(snippetsKeysHash,"snippets", snippetsWeightCoefficient);
+					addHashedKeywordsToBox(userKeysHash,"user", userKeywordsWeightCoefficient);
+					
+					reRunButton.visible = true;
+					reRunButton.enabled = true;
+					searchFactExtract(keywordBox.keywords,keywordBox.weights);
+				}
+			}
+			
+			protected function addHashedKeywordsToBox(hash:Object,sourceName:String, coefficient:Number):void{
+				for (var k:String in hash){
+					if(filterKeywords(k,hash[k]) > 0)keywordBox.addKeyword(k, hash[k],sourceName, coefficient);
+				} 
+			}
+			
+			protected var stopWords:Object = {"I":true,"a":true,"about":true,"an":true,"are":true,"as":true,"at":true,"be":true,"by":true,
+				"com":true,"de":true,"en":true,"for":true,"from":true,"how":true,"in":true,"is":true,"it":true,"la":true,"of":true,"on":true,
+				"or":true,"that":true,"the":true,"this":true,"to":true,"was":true,
+				"with":true,"und":true,"the":true};
+				
+			
+			protected function filterKeywords(keyword:String, weight:Number):Boolean{
+				if(weight <= 0 || stopWords[keyword.toLowerCase()]) return false;
+				else return true;
+			}
+		
+			
+			protected function searchFactExtract(query:String, weights:String):void{
+				feSnippets.dataProvider = null;
+				factExtractStatus = "- loading...";
+				feQueryString = FactExtractLoader.loadSnippets(query,weights,andOrRadios.selectedValue as String,
+					0,15,synonymsCheckBox.selected, function(results:Object):void{
+								feSnippets.dataProvider = results;
+								factExtractStatus = "(" + (results as XMLList).length + ")";
+							});	
+			}
+			
+			
+			protected function updateQualityForSelected(amount:int=1):void{
+				for each(var s:Object in feSnippets.selectedItems){
+					s.quality = (int(s.quality) + amount); 
+					FactExtractLoader.setQuality(s.uri,s.quality);
+				}
+			}
+			
+			protected function postSelected(verb:String):void{
+				ThinkLinkLoader.login("willettw@eecs.berkeley.edu","Sqjn91o");
+				for each(var s:Object in feSnippets.selectedItems){
+					var urlExtract:Array = (/\w+\..*(?=.xhtml)/).exec(s.uri.toString());
+					var url:String = (urlExtract && urlExtract.length > 0)?urlExtract[0]:"";
+					ThinkLinkLoader.postSnippet(s.p,url,"");
+				}
+			}
+			
+			//---------------------ThinkLink claim browser tree methods---------------------------------
+			
+			//load a new thinklink node into the thinklink browser & start to find keywords
+			private function handleClick(e:Event):void{
+				if (e.currentTarget.selectedItem && e.currentTarget.selectedItem.id > 0){
+					tlClaim.dataProvider = [e.currentTarget.selectedItem];
+					ThinkLinkLoader.loadNode(e.currentTarget.selectedItem.id, function(results:Object):void{
+							mmClaims.dataProvider = results;
+						});
+					findKeywords(e.currentTarget.selectedItem.id,e.currentTarget.selectedItem.text)
+				}
+			}
+			
+			private function treeLabel(item:Object):String
+            {
+                var node:XML = XML(item);
+                if( node.hasOwnProperty("text")) return node.text;
+                else if(node.hasSimpleContent()) return null;
+                else return node.localName().toString();
+            }
+			private function treeIcon(item:Object):Class
+            {
+                var node:XML = XML(item);
+                if(node.hasOwnProperty("type")){
+                	switch(node.type.toString()){
+                		case "claim":
+                			return claimIcon;
+                			break;
+                		case "topic":
+            				return topicIcon;
+                			break;
+                		default:
+                			return bombIcon;
+                	}
+                }
+                return null;
+            }
+			private function recurseExpand(item:XML,animate:Boolean):void{
+				mmClaims.expandItem(item,true,animate);
+				for each(var child:XML in item.children()){
+					recurseExpand(child,false);
+				}
+			}
+			
+			
+		]]>
+	</mx:Script>
+	
+	<mx:HDividedBox id="hdbox1" y="38" horizontalCenter="0" verticalScrollPolicy="off" width="90%" height="90%">
+		<mx:VBox width="30%" height="100%" id="vbox2" verticalGap="0">
+			<mx:Label fontSize="33" fontWeight="bold" htmlText="&lt;font color=&quot;#DDDDDD&quot;&gt;Fact&lt;/font&gt;Extract" color="#709CC5"/>
+			<mx:Label text="Select a Claim to Find Facts from the Web" id="label0"/>
+			<mx:Tree width="100%" height="100%" labelFunction="treeLabel" iconFunction="treeIcon"
+				dataDescriptor="{new FactExtractTreeDescriptor()}" id="mmClaims" 
+				click="{handleClick(event)}">
+				<mx:updateComplete>{if(mmClaims.dataProvider)recurseExpand(mmClaims.dataProvider[0],true)}</mx:updateComplete>
+			</mx:Tree>
+		</mx:VBox>	
+		<mx:VBox width="70%" height="100%" verticalScrollPolicy="off" verticalGap="4">
+			<mx:HBox width="100%" backgroundColor="#709CC5" color="#FFFFFF">
+				<mx:Label text="Current Claim" fontWeight="bold" fontFamily="Verdana" fontSize="12"/>
+				<mx:List width="100%" height="20"  variableRowHeight="true"  
+				click="{handleClick(event)}" selectable="true" id="tlClaim"
+				labelFunction="treeLabel" iconFunction="treeIcon" borderStyle="none" backgroundColor="#709CC5"/>
+				<mx:LinkButton label="Debug" fontSize="9" click="{currentState=(currentState=='clean'?'debug':'clean')}" id="linkbutton1"/>
+			</mx:HBox>
+			<mx:Label text="Extracted Keywords {keyExtractStatus}" fontSize="12" fontWeight="bold"/>
+			<ns1:KeywordBox width="100%" id="keywordBox" height="160"  horizontalGap="0"/>
+			<ns3:FlowBox width="100%" maxHeight="50">
+				<mx:RadioButtonGroup id="andOrRadios"/>
+					<mx:Label text="Claim" color="{ColorPalette.CATEGORY_COLORS_10[0]}" fontWeight="bold"/>
+					<mx:HSlider id="iSlider"  minimum="0" maximum="2" width="60" liveDragging="true"
+						value="{inputWeightCoefficient}" change="{keywordBox.updateWeights(inputWeightCoefficient=iSlider.value,'input')}"/>
+					<mx:Label text="Related" color="{ColorPalette.CATEGORY_COLORS_10[1]}" fontWeight="bold"/>
+					<mx:HSlider id="rSlider" minimum="0" maximum="2" width="60" liveDragging="true"
+						value="{relatedWeightCoefficient}" change="{keywordBox.updateWeights(relatedWeightCoefficient=rSlider.value,'related')}"/>
+					<mx:Label text="Snippets" color="{ColorPalette.CATEGORY_COLORS_10[3]}" fontWeight="bold"/>
+					<mx:HSlider id="sSlider" minimum="0" maximum="2" width="60" liveDragging="true" 
+						value="{snippetsWeightCoefficient}" change="{keywordBox.updateWeights(snippetsWeightCoefficient=sSlider.value,'snippets')}"/>
+					<mx:Label text="User" color="{ColorPalette.CATEGORY_COLORS_10[2]}" fontWeight="bold"/>
+					<mx:HSlider id="uSlider" minimum="0" maximum="2" width="60" liveDragging="true"
+						value="{userKeywordsWeightCoefficient}" change="{keywordBox.updateWeights(userKeywordsWeightCoefficient=uSlider.value,'user')}"/>
+					<mx:Label text="Threshold"/>
+					<mx:HSlider id="tSlider" minimum="0" maximum="100" width="60" 
+						value="{weightsThreshold}" liveDragging="true" change="{weightsThreshold = keywordBox.threshold = tSlider.value;keywordBox.update()}"/>
+					<mx:Label text="Additional Keywords"/>
+					<mx:TextInput id="addKeyText" width="114" 
+						enter="{keywordBox.addKeyword(addKeyText.text,USER_KEYWORDS_WEIGHT,'user',userKeywordsWeightCoefficient);addKeyText.text='';}" toolTip="Add Additional Keywords"/>
+					<mx:Button label="x" toolTip="Clear Keywords" width="31" fillAlphas="[1.0, 1.0]" fillColors="[#BB2300, #FF0000]" color="#FFFFFF" id="removeButton" click="{keywordBox.clear()}"/>
+					<mx:Button id="reRunButton" label="Search Again" enabled="false"  
+						click="{searchFactExtract(keywordBox.keywords,keywordBox.weights);}" />
+			</ns3:FlowBox>
+			<mx:Accordion width="100%" creationPolicy="all" id="accordion1" height="150">
+				<mx:Canvas label="Related Thinklink Claims and Topics" width="100%" height="100%">
+					<mx:List width="100%" height="100%"  variableRowHeight="true"  
+						click="{handleClick(event)}" selectable="true" id="teClaims"
+						labelFunction="treeLabel" iconFunction="treeIcon"/>
+				</mx:Canvas>
+				<mx:Canvas label="FactExtract Query" width="100%" height="100%">
+					<mx:Text id="feQueryText" text="{feQueryString}" width="100%" height="100%" />
+				</mx:Canvas>
+				<mx:HBox label="FactExtract Settings">
+					<mx:RadioButton label="and" value="and" groupName="andOrRadios" selected="true" id="radiobutton1"/>
+					<mx:RadioButton label="or" value="or" groupName="andOrRadios" id="radiobutton2" selected="true"/>
+					<mx:CheckBox label="Use Synonyms" id="synonymsCheckBox"/>
+					
+				</mx:HBox>
+			</mx:Accordion>
+			<mx:HBox width="100%" backgroundColor="#709CC5" color="#FFFFFF">
+				<mx:Label text="FactExtract Snippets {factExtractStatus}" fontSize="12" fontWeight="bold"/>
+			</mx:HBox>
+			
+			<mx:List width="100%" variableRowHeight="true" itemRenderer="SnippetRenderer" id="feSnippets" height="100%" allowMultipleSelection="true"></mx:List>
+			<mx:HBox id="snippetControls" width="100%" horizontalGap="2" verticalAlign="middle" >
+				<mx:Image id="tUp" alpha="0.6" mouseOver="{tUp.alpha = 1}" mouseOut="{tUp.alpha = 0.6}"
+					 click="{updateQualityForSelected(1)}">
+					<mx:source>http://wjwillett.net/other/FactExtract/icons/thumb_up.png</mx:source>
+				</mx:Image>
+				<mx:Image id="tDown" alpha="0.6" mouseOver="{tDown.alpha = 1}" mouseOut="{tDown.alpha = 0.6}"
+					click="{updateQualityForSelected(-1)}">
+					<mx:source>http://wjwillett.net/other/FactExtract/icons/thumb_down.png</mx:source>
+				</mx:Image>
+				<mx:VRule height="20"/>
+				<mx:LinkButton label="States" textDecoration="normal" fontWeight="bold" color="#033567"/>
+					<!--click="{updateQualityForSelected(1);postSelected('states')}"/>-->
+				<mx:LinkButton label="Supports" textDecoration="normal" fontWeight="bold" color="#007608"/>
+				<mx:LinkButton label="Opposes" textDecoration="normal" fontWeight="bold" color="#8E0300"/>
+				<mx:LinkButton label="Not Relevant" textDecoration="normal" fontWeight="bold"/>
+			</mx:HBox>
+		</mx:VBox>
+	</mx:HDividedBox>
+</mx:Application>

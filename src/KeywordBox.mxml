@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:HBox xmlns:mx="http://www.adobe.com/2006/mxml" height="200" horizontalScrollPolicy="auto" verticalScrollPolicy="off" 
+	 xmlns:flex="flare.flex.*">
+	
+	
+	
+	<mx:Script>
+		<![CDATA[
+			import flare.vis.controls.ClickControl;
+			import flare.display.DirtySprite;
+			import flare.query.graph.NodePredicate;
+			import flare.vis.events.SelectionEvent;
+			import flare.vis.controls.HoverControl;
+			import flare.scale.ScaleType;
+			import flare.vis.data.NodeSprite;
+			import flare.util.Sort;
+			import flare.util.palette.ColorPalette;
+			import flare.vis.operator.layout.CircleLayout;
+			import flare.vis.operator.filter.VisibilityFilter;
+			import flare.animate.Transitioner;
+			import flare.util.Colors;
+			import flare.vis.operator.label.Labeler;
+			import flare.vis.operator.encoder.SizeEncoder;
+			import flare.vis.operator.layout.CirclePackingLayout;
+			import flare.vis.events.TooltipEvent;
+			import flare.display.TextSprite;
+			import flare.vis.controls.TooltipControl;
+			import flare.vis.data.DataSprite;
+			import flare.vis.operator.encoder.ColorEncoder;
+			import flare.vis.operator.layout.AxisLayout;
+			import flare.vis.Visualization;
+			import flare.vis.data.Data;
+			import mx.binding.utils.BindingUtils;
+			import mx.utils.ObjectUtil;
+			import mx.controls.Label;
+			import mx.collections.ArrayCollection;
+			
+			protected const DEFAULT_FILL_ALPHA:Number = 0.05;
+			
+			
+			protected var _data:Data;
+			protected var _vis:Visualization;
+			protected var _nodeHash:Object = new Object();
+			
+			protected var _threshold:Number = 0;
+			public function set threshold(th:Number):void { _threshold = th; _vis.update(_t);}
+			public function get threshold():Number {return _threshold;}
+			
+			
+			protected var _t:Transitioner = new Transitioner(0.3);
+			
+			public function setupVis():void{
+				_vis = keywordVis.visualization;
+				_data = keywordVis.visualization.data;
+				
+				resizeVis();
+				
+				//Defaults				
+				_vis.data.nodes.clearDefaults();
+				_vis.data.nodes.setDefault("lineWidth",0);
+				_vis.data.nodes.setDefault("lineAlpha",0.5);
+				_vis.data.nodes.setDefault("fillAlpha",DEFAULT_FILL_ALPHA);
+				_vis.data.nodes.setDefault("size",10);
+				
+				//Operators
+				_vis.operators.add(new ColorEncoder("data.source",Data.NODES,"fillColor"));
+				_vis.operators.add(new ColorEncoder("data.source",Data.NODES,"lineColor"));
+				var ge:ColorEncoder = new ColorEncoder("data.source",Data.NODES,"lineColor");
+				ge.filter = belowThreshold;
+				ge.palette = new ColorPalette([Colors.gray(200)]);
+				_vis.operators.add(ge);
+				var se:SizeEncoder = new SizeEncoder("data.adjustedWeight");
+				se.scale.scaleType = ScaleType.LINEAR; 
+				se.scale.zeroBased = true;
+				_vis.operators.add(se);
+				_vis.operators.add(new BasicTagCloudLayout());
+				
+				//Controls
+				_vis.controls.add(new TooltipControl(TextField,null,updateTip,updateTip));
+				_vis.controls.add(new HoverControl(TextField,HoverControl.MOVE_AND_RETURN,hoverOn,hoverOut));
+				_vis.controls.add(new ClickControl(TextField,1,onClick));
+			}
+			
+			protected function updateTip(t:TooltipEvent):void{
+				var ns:NodeSprite = findNode(t.object) as NodeSprite
+				if(ns){
+					TextSprite(t.tooltip).text = ns.data.keyword + " (" + ns.data.adjustedWeight + ") - Click to Remove";	
+				}
+			}
+			
+			protected function hoverOn(s:SelectionEvent):void{
+				var ns:NodeSprite = findNode(s.object) as NodeSprite
+				if(ns){
+					ns.props.alpha = ns.alpha;
+					ns.alpha = 0.5;
+					ns.dirty();
+				}
+			}
+			protected function hoverOut(s:SelectionEvent):void{
+				var ns:NodeSprite = findNode(s.object) as NodeSprite
+				if(ns)ns.alpha = ns.props.alpha;
+			}
+			
+			protected function onClick(s:SelectionEvent):void{
+				var ns:NodeSprite = findNode(s.object) as NodeSprite;
+				if(ns)removeNode(ns);
+				update();
+			}
+			
+			//FIXME:A haskish way of getting a reference to clicked and hovered NodeSprites - clearly I'm doing something wrong
+			// when rendering TextSprites on top of NodeSprites
+			protected function findNode(o:Object):DataSprite{
+				var ds:DataSprite;
+				if(o is DataSprite) ds = (o as DataSprite);
+				else if(o is TextField  && (o as TextField).parent is TextSprite){
+					ds = ((o as TextField).parent as TextSprite).parent as DataSprite;
+				}
+				return ds;
+			}
+			
+			
+			protected function aboveThreshold(d:DataSprite):Boolean{return d.data.adjustedWeight > threshold;}
+			protected function belowThreshold(d:DataSprite):Boolean{return d.data.adjustedWeight < threshold;}
+			
+			
+			
+			/**
+			 * Add a single keyword
+			 */
+			public function addKeyword(keyword:String, weight:Number, source:String, coefficient:Number=1, entity:Boolean=false):void{
+				if(!_nodeHash[keyword+source]){ //prevent duplicate entries
+					var n:NodeSprite = _data.addNode({"keyword":keyword,"weight":weight,"source":source,"adjustedWeight":weight*coefficient,"enitity":entity});
+					_nodeHash[keyword+source] = n;
+					_vis.update();
+				}
+			} 
+			
+			/**
+			 * Updates the adjustedWeights of all nodes with a given source
+			 *  by multiplying the weight field by a new coefficient.
+			 */
+			public function updateWeights(coefficient:Number, source:String):void{
+				_data.nodes.visit(function(d:DataSprite):void{
+							if(d.data["source"]==source){
+								d.data["adjustedWeight"]=d.data["weight"]*coefficient;
+							}
+						});
+				_vis.update();
+			}
+
+			/**
+			 * Removes all nodes from the keyword visualization and all collections
+			 */
+			public function clear():void{
+				
+				while(_data.nodes.length > 0)_data.nodes.removeAt(0);
+				_data.nodes.clear();
+				_data.clear();
+				_nodeHash = new Object();  
+				update();
+			}
+			
+			/**
+			 * Removes a node from the keyword visualization and all collections
+			 */
+			public function removeNode(n:NodeSprite):void{
+				_vis.data.nodes.remove(n);
+				_nodeHash[n.data.keyword+n.data.source] = null;
+			}
+			
+			/**
+			 * Returns a comma-delimited list of all current keywords.
+			 */
+			public function get keywords():String{
+				var k:String = "";
+				for each(var o:Object in _data.nodes){
+					if(o.data["adjustedWeight"] > threshold) k += (o.data["keyword"] +",");
+				} 
+				if(k.length > 0) k=k.substring(0,k.length-1);
+				return k;
+			}
+			/**
+			 * Returns a comma-delimited list of weights for all current keywords.
+			 */
+			public function get weights():String{
+				var w:String = "";
+				for each(var o:Object in _data.nodes){
+					if(o.data["adjustedWeight"] > threshold) w += (o.data["weight"] +",");
+				}
+				if(w.length > 0) w=w.substring(0,w.length-1);
+				return w;
+			}
+			
+			public function update():void{_vis.update()};
+			
+			protected function resizeVis():void{
+				if(_vis){
+					_vis.bounds.height = this.height;
+					_vis.bounds.width = this.width;
+					_vis.update();
+				}
+			}
+			
+		]]>
+	</mx:Script>
+	<flex:FlareVis id="keywordVis" creationComplete="{setupVis()}" resize="{resizeVis()}" width="100%" height="100%"/>
+</mx:HBox>
